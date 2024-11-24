@@ -59,11 +59,26 @@ void *fast_memcpy(void *dst, const void *src, size_t len)
 void *fast_memmove(void *dst, const void *src, size_t len)
 {
   uintptr_t dstP = (uintptr_t)dst;
-  // copy few bytes to align dst to word boundary
-  if (len >= sizeof(uint64_t))
+  uintptr_t srcP = (uintptr_t)src;
+  // check if source and destination are unaligned by number of bytes with respect to Word coundary
+  uint32_t wordBytes = sizeof(uint64_t);
+  if((srcP & (wordBytes - 1)) == (dstP & (wordBytes - 1)))
   {
-    len = len - ((-dstP) % sizeof(uint64_t));
+    // copy few bytes to align dst to word boundary
+    if (len >= sizeof(uint64_t))
+    {
+      uint32_t bytesToCopy = (-dstP) % wordBytes;
+      len = len - bytesToCopy;
+      while (bytesToCopy--)
+      {
+        *((uint8_t*)dst) = *((uint8_t*)src);
+        dst = (void*)((uint8_t*)dst + 1);
+        src = (void*)((uint8_t*)dst + 1);
+      }
+    }
   }
+
+  
   //WIP
   return dst;
 }
