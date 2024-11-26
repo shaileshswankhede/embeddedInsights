@@ -53,34 +53,89 @@ void *fast_memcpy(void *dst, const void *src, size_t len)
       *((uint8_t *)dst) = *((uint8_t *)src);
     }
   }
+  else
+  {
+    while(len--)
+    {
+      *((uint8_t *)dst) = *((uint8_t *)src);
+      dst = (void *)((uint8_t *)dst + 1);
+      src = (void *)((uint8_t *)src + 1);
+    }
+  }
   return dstOrig;
 }
 
-void *fast_memmove(void *dst, const void *src, size_t len)
+void *faster_memcopy(void *dst, const void *src, size_t len)
 {
+  // reading word from address not aligned to word size is slower
+  // instead copy first few bytes till address gets aligned to word boundary
+  // if both source and destination are unaligned by same number of bytes with respect to Word coundary
+  // then simple bytecopy of extra unaligned bytes should work. Otherwise we need merge trick
+  void *dstOrig = dst;
   uintptr_t dstP = (uintptr_t)dst;
   uintptr_t srcP = (uintptr_t)src;
   // check if source and destination are unaligned by number of bytes with respect to Word coundary
-  uint32_t wordBytes = sizeof(uint64_t);
+  uint8_t wordBytes = sizeof(uint32_t);
   if((srcP & (wordBytes - 1)) == (dstP & (wordBytes - 1)))
   {
     // copy few bytes to align dst to word boundary
-    if (len >= sizeof(uint64_t))
+    if (len >= wordBytes)
     {
-      uint32_t bytesToCopy = (-dstP) % wordBytes;
+      uint8_t bytesToCopy = (-dstP) % wordBytes;
       len = len - bytesToCopy;
       while (bytesToCopy--)
       {
         *((uint8_t*)dst) = *((uint8_t*)src);
         dst = (void*)((uint8_t*)dst + 1);
-        src = (void*)((uint8_t*)dst + 1);
+        src = (void*)((uint8_t*)src + 1);
+      }
+    }
+    fast_memcpy(dst, src, len);
+  }
+  else
+  {
+    // Reference: https://book-of-gehn.github.io/articles/2024/09/21/Behind-memcpy-memmove.html
+    // dst and source NOT unaligned by same num of bytes
+    // first copy few bytes such that dst gets aligned. Then read current and next word, do necessary alignement to get effective word
+    // and write to aligned dst
+    if (len >= wordBytes)
+    {
+      uint8_t bytesToCopy = (-dstP) % wordBytes;
+      len = len - bytesToCopy;
+      while (bytesToCopy--)
+      {
+        *((uint8_t*)dst) = *((uint8_t*)src);
+        dst = (void*)((uint8_t*)dst + 1);
+        src = (void*)((uint8_t*)src + 1);
+      }
+      //now dst is aligned on word boundary
+      if(len > wordBytes)
+      {
+        srcP = (uintptr_t)src;
+        uint8_t sh1 = srcP % wordBytes;
+        uint8_t sh2 = wordBytes - sh1;
+        uint32_t *lWord = (uint32_t*)(srcP - sh1);
+        uint32_t *rWord = (uint32_t*)(srcP + sh2);
+        uint32_t srcWord = ((*lWord) << sh1) | ((*rWord) >> sh2);
+        *((uint32_t*)dst) = *((uint32_t*)src);
+        dst = (void*)((uint32_t*)dst + 1);
+        src = (void*)((uint32_t*)src + 1);
+        len -= wordBytes;
+        fast_memcpy(dst, src, len);
+      }
+      else
+      {
+        // bytecopy remaining few bytes
+        while (len--)
+        {
+          *((uint8_t*)dst) = *((uint8_t*)src);
+          dst = (void*)((uint8_t*)dst + 1);
+          src = (void*)((uint8_t*)src + 1);
+        }
       }
     }
   }
-
-  
-  //WIP
-  return dst;
+  return dstOrig;
 }
 
 void *my_memmove(void *dst, const void *src, size_t len)
@@ -92,6 +147,7 @@ void *my_memmove(void *dst, const void *src, size_t len)
 
   // simple efficient memcpy can be used if addresses are non overlapping
   // safe way to check is via pointer subtraction than using dstP >= srcP + len as it may overflow
+  // also direct comparing pointer is undefined behavior if pointer doesn't point to same memory object. Thus address comparision recommended
   // if ((dstP > srcP && (dstP - srcP) >= len) ||
   //    (srcP > dstP) && (srcP - dstP) >= len)
   //{
@@ -127,15 +183,16 @@ int main()
   // memcpy behaviour is implementation specific for overlapping region
   // For optimization it may copy block of data (like 8 bytes) in single instruction
   // and trailing data in descending order of block size
-  memcpy(buffer0 + 2, buffer0, 13);
-  my_memcpy(buffer1 + 2, buffer1, 13);
-  my_memmove(buffer2 + 2, buffer2, 13);
-  fast_memcpy(buffer3 + 2, buffer3, 13);
-  fast_memmove(buffer4 + 2, buffer4, 13);
+  memcpy(buffer0 + 2, buffer0, 13);         // result depends on how memcpy is implemented. Expected result if memcpy copying large data in one chunk like page even though address overlapping
+  my_memcpy(buffer1 + 2, buffer1, 13);      // unexpected result with bytecopy implementation of memcpy because of overlap and dst addr > src addr
+  my_memmove(buffer2 + 2, buffer2, 13);     // expected result with memove implementation, where direction of copy determined based on dst addr and src addr
+  fast_memcpy(buffer3 + 2, buffer3, 13);    // fast memcpy using block copy. Result varies compared to bytecopy because direct chunk copied
+  faster_memcopy(buffer4, buffer4 + 2, 13); // even faster memcpy leveraging address alignement for data access optimization
 
   printf("Result with memcpy: %s\n", buffer0);
   printf("Result with my_memcpy: %s\n", buffer1);
   printf("Result with my_memmove: %s\n", buffer2);
   printf("Result with fast memcpy: %s\n", buffer3);
+  printf("Result with faster memcpy: %s\n", buffer4);
   return 0;
 }
