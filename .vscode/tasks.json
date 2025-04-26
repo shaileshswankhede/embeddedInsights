@@ -10,7 +10,7 @@
                 "-g",
                 "-pthread",
                 "${fileDirname}/*.cpp",
-                "${fileDirname}/*.c",
+                //"${fileDirname}/*.c",
                 "-o",
                 "${fileDirname}/${fileBasenameNoExtension}",
                 "-lrt",
